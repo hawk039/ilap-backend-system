@@ -103,6 +103,7 @@ async def ask_conversation(
         key=f"ask:{current.user.id}:{request.client.host if request.client else 'unknown'}",
         limit=settings.ask_rate_limit_per_minute,
         window_seconds=60,
+        settings=settings,
     )
     conversation = conversation_service.get_conversation_for_user(db, user_id=current.user.id, conversation_id=conversation_id)
     return await conversation_service.ask_conversation(

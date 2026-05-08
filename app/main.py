@@ -9,7 +9,7 @@ from app.api.router import api_router
 from app.core.config import get_settings
 from app.core.errors import APIError
 from app.db.base import Base
-from app.db.session import SessionLocal, engine
+from app.db.session import get_engine, get_session_local
 from app.services.bootstrap import seed_baseline_data
 
 
@@ -17,8 +17,9 @@ from app.services.bootstrap import seed_baseline_data
 async def lifespan(_: FastAPI):
     settings = get_settings()
     if settings.auto_create_schema:
-        Base.metadata.create_all(bind=engine)
-        with SessionLocal() as db:
+        Base.metadata.create_all(bind=get_engine())
+    if settings.seed_reference_data or settings.enable_admin_bootstrap:
+        with get_session_local()() as db:
             seed_baseline_data(db, settings)
     yield
 
@@ -30,6 +31,9 @@ def create_app() -> FastAPI:
         version=settings.app_version,
         debug=settings.debug,
         lifespan=lifespan,
+        docs_url="/docs" if settings.docs_enabled else None,
+        redoc_url="/redoc" if settings.docs_enabled else None,
+        openapi_url="/openapi.json" if settings.docs_enabled else None,
     )
     app.add_middleware(
         CORSMiddleware,
@@ -74,6 +78,10 @@ def create_app() -> FastAPI:
             "environment": settings.environment,
             "status": "ok",
         }
+
+    @app.get("/healthz", tags=["system"])
+    async def healthcheck_ready():
+        return {"status": "ok"}
 
     app.include_router(api_router, prefix=settings.api_prefix)
     return app

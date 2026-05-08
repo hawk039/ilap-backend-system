@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from dataclasses import dataclass
 
 from fastapi import Depends, Header, Request
@@ -30,11 +31,13 @@ def get_current_user(
         raise unauthorized()
     payload = decode_access_token(authorization.split(" ", 1)[1], settings)
     session = db.scalar(select(UserSession).where(UserSession.id == payload["sid"]))
-    if session is None or session.revoked_at is not None:
+    if session is None or session.revoked_at is not None or _is_expired(session.expires_at):
         raise unauthorized()
     user = db.scalar(select(User).where(User.id == payload["sub"]))
     if user is None:
         raise unauthorized()
+    if settings.require_verified_email and user.email_verified_at is None:
+        raise forbidden("Email verification is required before accessing this resource.", "email_verification_required")
     return CurrentUser(user=user, session=session)
 
 
@@ -42,3 +45,9 @@ def require_admin(current: CurrentUser = Depends(get_current_user)) -> CurrentUs
     if current.user.role != "admin":
         raise forbidden("Admin privileges are required.")
     return current
+
+
+def _is_expired(value: datetime) -> bool:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value < datetime.now(UTC)

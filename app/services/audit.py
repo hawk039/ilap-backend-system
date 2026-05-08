@@ -22,7 +22,7 @@ def write_audit_log(
             action=action,
             entity_type=entity_type,
             entity_id=entity_id,
-            metadata=metadata,
+            metadata_json=metadata,
             created_at=datetime.now(UTC),
         )
     )

@@ -8,16 +8,23 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
-from app.core.errors import conflict, not_found, unauthorized
+from app.core.errors import conflict, forbidden, not_found, unauthorized
 from app.core.security import create_access_token, hash_password, verify_password
 from app.models import EmailVerificationToken, PasswordResetToken, User, UserSession
 from app.schemas.auth import AuthResponse, AuthUser, SessionResponse, SessionTokens
 from app.schemas.users import NotificationPreferences, UserProfile
 from app.services.audit import write_audit_log
+from app.services.email_delivery import send_password_reset_email, send_verification_email
 
 
 def now_utc() -> datetime:
     return datetime.now(UTC)
+
+
+def is_expired(value: datetime) -> bool:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value < now_utc()
 
 
 def hash_token(token: str) -> str:
@@ -133,6 +140,8 @@ def register_user(
     )
     db.commit()
     db.refresh(user)
+    verification_token = issue_email_verification_token(db, user=user, settings=settings)
+    send_verification_email(settings=settings, recipient=user.email, token=verification_token)
     return AuthResponse(user=build_auth_user(user), session=tokens)
 
 
@@ -148,6 +157,8 @@ def login_user(
     user = db.scalar(select(User).where(User.email == email.lower()))
     if user is None or not verify_password(password, user.password_hash):
         raise unauthorized("Invalid email or password.", "invalid_credentials")
+    if settings.require_verified_email and user.email_verified_at is None:
+        raise forbidden("Email verification is required before signing in.", "email_verification_required")
     tokens = create_session(
         db,
         user=user,
@@ -170,7 +181,7 @@ def login_user(
 
 def refresh_user_session(db: Session, *, refresh_token: str, settings: Settings, user_agent: str | None, ip_address: str | None) -> AuthResponse:
     session = db.scalar(select(UserSession).where(UserSession.refresh_token_hash == hash_token(refresh_token)))
-    if session is None or session.revoked_at is not None or session.expires_at < now_utc():
+    if session is None or session.revoked_at is not None or is_expired(session.expires_at):
         raise unauthorized("Invalid refresh token.", "invalid_refresh_token")
     user = db.get(User, session.user_id)
     tokens = create_session(
@@ -232,6 +243,7 @@ def issue_password_reset_token(db: Session, *, user: User, settings: Settings) -
         metadata={"delivery": "email_provider_pending"},
     )
     db.commit()
+    send_password_reset_email(settings=settings, recipient=user.email, token=raw_token)
     return raw_token
 
 
@@ -242,7 +254,7 @@ def reset_password(db: Session, *, token: str, new_password: str) -> None:
             PasswordResetToken.used_at.is_(None),
         )
     )
-    if token_row is None or token_row.expires_at < now_utc():
+    if token_row is None or is_expired(token_row.expires_at):
         raise unauthorized("Invalid or expired reset token.", "invalid_reset_token")
     user = db.get(User, token_row.user_id)
     user.password_hash = hash_password(new_password)
@@ -276,6 +288,14 @@ def issue_email_verification_token(db: Session, *, user: User, settings: Setting
     return raw_token
 
 
+def resend_verification(db: Session, *, email: str, settings: Settings) -> None:
+    user = db.scalar(select(User).where(User.email == email.lower()))
+    if user is None or user.email_verified_at is not None:
+        return
+    token = issue_email_verification_token(db, user=user, settings=settings)
+    send_verification_email(settings=settings, recipient=user.email, token=token)
+
+
 def verify_email(db: Session, *, token: str) -> None:
     token_row = db.scalar(
         select(EmailVerificationToken).where(
@@ -283,7 +303,7 @@ def verify_email(db: Session, *, token: str) -> None:
             EmailVerificationToken.used_at.is_(None),
         )
     )
-    if token_row is None or token_row.expires_at < now_utc():
+    if token_row is None or is_expired(token_row.expires_at):
         raise unauthorized("Invalid or expired verification token.", "invalid_verification_token")
     user = db.get(User, token_row.user_id)
     user.email_verified_at = now_utc()

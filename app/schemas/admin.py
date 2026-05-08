@@ -1,6 +1,8 @@
 from datetime import datetime
 from typing import Any
 
+from pydantic import Field
+
 from app.schemas.common import APIModel, EmailValue, SupportStatus, UserRole
 
 
@@ -39,5 +41,5 @@ class AuditLogResponse(APIModel):
     action: str
     entity_type: str
     entity_id: str
-    metadata: dict[str, Any]
+    metadata: dict[str, Any] = Field(validation_alias="metadata_json")
     created_at: datetime

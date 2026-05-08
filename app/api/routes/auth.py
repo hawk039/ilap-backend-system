@@ -10,6 +10,7 @@ from app.schemas.auth import (
     AuthResponse,
     ForgotPasswordRequest,
     LoginRequest,
+    ResendVerificationRequest,
     RefreshSessionRequest,
     RegisterRequest,
     ResetPasswordRequest,
@@ -34,6 +35,7 @@ def register(
         key=f"register:{request.client.host if request.client else 'unknown'}",
         limit=settings.register_rate_limit_per_minute,
         window_seconds=60,
+        settings=settings,
     )
     return auth_service.register_user(
         db,
@@ -57,6 +59,7 @@ def login(
         key=f"login:{payload.email.lower()}:{request.client.host if request.client else 'unknown'}",
         limit=settings.login_rate_limit_per_minute,
         window_seconds=60,
+        settings=settings,
     )
     return auth_service.login_user(
         db,
@@ -109,6 +112,7 @@ def forgot_password(
         key=f"forgot:{payload.email.lower()}:{request.client.host if request.client else 'unknown'}",
         limit=settings.forgot_password_rate_limit_per_hour,
         window_seconds=3600,
+        settings=settings,
     )
     user = db.scalar(select(User).where(User.email == payload.email.lower()))
     if user:
@@ -132,3 +136,20 @@ def verify_email(
 ) -> MessageResponse:
     auth_service.verify_email(db, token=payload.token)
     return MessageResponse(message="Email verification completed.")
+
+
+@router.post("/resend-verification", response_model=MessageResponse)
+def resend_verification(
+    payload: ResendVerificationRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> MessageResponse:
+    enforce_rate_limit(
+        key=f"resend-verify:{payload.email.lower()}:{request.client.host if request.client else 'unknown'}",
+        limit=settings.forgot_password_rate_limit_per_hour,
+        window_seconds=3600,
+        settings=settings,
+    )
+    auth_service.resend_verification(db, email=payload.email, settings=settings)
+    return MessageResponse(message="If the account exists, verification instructions will be sent.")

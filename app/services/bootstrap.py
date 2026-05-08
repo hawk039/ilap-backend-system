@@ -37,33 +37,35 @@ CATEGORY_SEED = [
 
 def seed_baseline_data(db: Session, settings: Settings) -> None:
     now = datetime.now(UTC)
-    for item in CATEGORY_SEED:
-        category = db.get(LegalCategory, item["id"])
-        if category is None:
+    if settings.seed_reference_data:
+        for item in CATEGORY_SEED:
+            category = db.get(LegalCategory, item["id"])
+            if category is None:
+                db.add(
+                    LegalCategory(
+                        **item,
+                        is_active=True,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+    if settings.enable_admin_bootstrap:
+        admin = db.scalar(select(User).where(User.email == settings.admin_bootstrap_email.lower()))
+        if admin is None:
             db.add(
-                LegalCategory(
-                    **item,
-                    is_active=True,
+                User(
+                    full_name="ILAP Admin",
+                    email=settings.admin_bootstrap_email.lower(),
+                    password_hash=hash_password(settings.admin_bootstrap_password),
+                    role="admin",
+                    preferred_practice_areas=[],
+                    notification_preferences={
+                        "product_updates": True,
+                        "support_followups": True,
+                        "security_alerts": True,
+                    },
                     created_at=now,
                     updated_at=now,
                 )
             )
-    admin = db.scalar(select(User).where(User.email == settings.admin_bootstrap_email.lower()))
-    if admin is None:
-        db.add(
-            User(
-                full_name="ILAP Admin",
-                email=settings.admin_bootstrap_email.lower(),
-                password_hash=hash_password(settings.admin_bootstrap_password),
-                role="admin",
-                preferred_practice_areas=[],
-                notification_preferences={
-                    "product_updates": True,
-                    "support_followups": True,
-                    "security_alerts": True,
-                },
-                created_at=now,
-                updated_at=now,
-            )
-        )
     db.commit()
